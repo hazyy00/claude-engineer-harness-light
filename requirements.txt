@@ -1,0 +1,15 @@
+# Core -- Claude Agent SDK (no version pin to avoid install failures)
+claude-agent-sdk
+
+# Environment variable loading
+python-dotenv
+
+# HTTP client (used by SDK)
+httpx
+anyio
+
+# Pydantic (used by SDK)
+pydantic
+pydantic-settings
+
+# Note: No arcadepy -- GitHub uses gh CLI directly

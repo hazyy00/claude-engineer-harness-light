@@ -1,0 +1,18 @@
+# Task Specification
+
+Replace this file with a description of what you want the agent to build.
+
+## Example
+
+Build a simple to-do list web app with the following features:
+- Add, edit, and delete tasks
+- Mark tasks as complete
+- Filter by status (all / active / completed)
+- Persist tasks to localStorage
+- Clean, minimal UI
+
+## Tips
+
+- Be specific about the tech stack if you have a preference (React, Vue, plain HTML, etc.)
+- List the features in priority order -- the agent works top to bottom
+- Keep the scope realistic for a few sessions

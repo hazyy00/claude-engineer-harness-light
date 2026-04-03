@@ -1,0 +1,19 @@
+# Example: To-Do App
+
+Build a to-do list web app using React and Vite.
+
+## Features
+
+1. Add new tasks with a text input
+2. Mark tasks as complete by clicking a checkbox
+3. Delete tasks with a remove button
+4. Filter tasks: All / Active / Completed
+5. Show a count of remaining tasks
+6. Persist tasks to localStorage so they survive page refresh
+7. Clean, minimal UI with good spacing and typography
+
+## Tech Stack
+
+- React + Vite
+- No external UI libraries (plain CSS)
+- localStorage for persistence
