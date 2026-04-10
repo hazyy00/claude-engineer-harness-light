@@ -20,7 +20,7 @@ from claude_agent_sdk import (
 )
 
 from client import create_client
-from tasks import is_initialized, print_progress, copy_spec_to_project
+from tasks import is_initialized, print_progress
 from prompts import get_initializer_task, get_continuation_task, copy_spec_to_project as copy_spec
 
 
