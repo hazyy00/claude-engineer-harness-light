@@ -58,8 +58,8 @@ Follow the prompts to authenticate with your GitHub account. The agent uses `gh`
 ## Step 5: Clone the Repository
 
 ```bash
-cd ~/Desktop/harness
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
+cd ~/Desktop/FOLDER_NAME
+git clone https://github.com/hazyy00/claude-engineer-harness-light.git
 cd YOUR_REPO
 ```
 
