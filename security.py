@@ -3,8 +3,7 @@ Bash Security Hooks
 ===================
 
 Validates bash commands before execution.
-Prevents dangerous operations while allowing everything needed
-for development work including the gh CLI.
+All segments of compound commands (&&, ||, ;, |) are checked individually.
 """
 
 import re
@@ -30,29 +29,76 @@ ALLOWED_COMMANDS = {
     "make", "cargo", "go",
     # Shell utilities
     "export", "source", "env",
+    # Shell built-ins
+    "cd", ".", "eval", "test", "[",
     # Process
     "kill", "pkill",
 }
 
-# Commands that are blocked outright regardless of arguments
-BLOCKED_COMMANDS = {
-    "sudo", "su", "rm -rf /", "shutdown", "reboot",
-    "dd", "mkfs", "fdisk",
+# Single-word commands that are blocked outright (checked with word boundaries)
+BLOCKED_WORDS = {
+    "sudo", "su", "shutdown", "reboot", "dd", "mkfs", "fdisk",
 }
 
 # Patterns for dangerous rm usage
 DANGEROUS_RM_PATTERNS = [
-    r"rm\s+(-\w*f\w*|-\w*r\w*\s+-\w*f\w*|-rf|-fr)\s+/(?!tmp|var/tmp)",
-    r"rm\s+.*\$HOME",
-    r"rm\s+.*~\s*$",
+    r"rm\s+(-\w*[rf]\w*\s+)*(-rf|-fr|-r\s+-f|-f\s+-r)\s+/(?!tmp|var/tmp)",
+    r"rm\s+(-[^\s]*\s+)*\$HOME",
+    r"rm\s+(-[^\s]*\s+)*~\s*(/|$)",
+    r"rm\s+(-[^\s]*\s+)*\*\s*$",
 ]
+
+
+def _split_segments(command: str) -> list[str]:
+    """Split a compound shell command into individual segments."""
+    # Split on ||, &&, ;, and | (in that order to avoid partial matches)
+    parts = re.split(r"\|\||&&|;|\|", command)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _base_cmd(segment: str) -> str:
+    """Return the first token (the executable) of a command segment."""
+    tokens = segment.strip().split()
+    return tokens[0] if tokens else ""
+
+
+def _check_segment(segment: str) -> str | None:
+    """
+    Validate a single command segment.
+    Returns an error message string if blocked, or None if allowed.
+    """
+    if not segment:
+        return None
+
+    base = _base_cmd(segment)
+
+    # Check for blocked single-word commands using word-boundary matching
+    for word in BLOCKED_WORDS:
+        if re.search(r"(?<!\w)" + re.escape(word) + r"(?!\w)", segment):
+            return f"Command blocked for safety: '{word}'"
+
+    # Validate rm commands against dangerous patterns
+    if base == "rm":
+        for pattern in DANGEROUS_RM_PATTERNS:
+            if re.search(pattern, segment):
+                return f"Dangerous rm command blocked: {segment[:100]}"
+
+    # Allow if base command is in the allowlist
+    if base in ALLOWED_COMMANDS:
+        return None
+
+    return (
+        f"Command not in allowlist: '{base}'. "
+        f"If this is needed, add it to ALLOWED_COMMANDS in security.py."
+    )
 
 
 def bash_security_hook(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any] | None:
     """
     Pre-execution hook that validates bash commands.
 
-    Returns None to allow the command, or a dict with an error to block it.
+    Every segment of compound commands (&&, ||, ;, |) is checked individually.
+    Returns None to allow, or a dict with "error" to block.
     """
     if tool_name != "Bash":
         return None
@@ -61,39 +107,9 @@ def bash_security_hook(tool_name: str, tool_input: dict[str, Any]) -> dict[str, 
     if not command:
         return None
 
-    # Get the base command
-    base_command = command.strip().split()[0] if command.strip() else ""
+    for segment in _split_segments(command):
+        error = _check_segment(segment)
+        if error:
+            return {"error": error}
 
-    # Block outright dangerous commands
-    for blocked in BLOCKED_COMMANDS:
-        if blocked in command:
-            return {
-                "error": f"Command blocked for safety: contains '{blocked}'"
-            }
-
-    # Validate rm commands
-    for pattern in DANGEROUS_RM_PATTERNS:
-        if re.search(pattern, command):
-            return {
-                "error": f"Dangerous rm command blocked: {command[:100]}"
-            }
-
-    # Allow if base command is in the allowlist
-    if base_command in ALLOWED_COMMANDS:
-        return None
-
-    # Allow shell built-ins and common patterns
-    if base_command in {"cd", "export", "source", ".", "eval", "test", "["}:
-        return None
-
-    # Allow pipes and compound commands by checking the first token
-    if "|" in command or "&&" in command or ";" in command:
-        first_cmd = re.split(r"[|;&]", command)[0].strip().split()[0]
-        if first_cmd in ALLOWED_COMMANDS or first_cmd in {"cd", "export"}:
-            return None
-
-    # Block anything else
-    return {
-        "error": f"Command not in allowlist: '{base_command}'. "
-                 f"If this is needed, add it to ALLOWED_COMMANDS in security.py."
-    }
+    return None

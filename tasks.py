@@ -13,6 +13,8 @@ from datetime import datetime
 
 
 TASKS_FILE = "TASKS.md"
+_TASK_PATTERN = re.compile(r"^- \[[ x]\]", re.MULTILINE)
+_DONE_PATTERN = re.compile(r"^- \[x\]", re.MULTILINE)
 
 
 def get_tasks_path(project_dir: Path) -> Path:
@@ -20,12 +22,19 @@ def get_tasks_path(project_dir: Path) -> Path:
 
 
 def is_initialized(project_dir: Path) -> bool:
-    """Return True if the project has been initialized (TASKS.md exists)."""
-    return get_tasks_path(project_dir).exists()
+    """Return True if TASKS.md exists AND contains at least one task entry.
+
+    A TASKS.md that exists but has no checkboxes means the first run crashed
+    before the agent populated the task list -- treat it as uninitialized.
+    """
+    path = get_tasks_path(project_dir)
+    if not path.exists():
+        return False
+    content = path.read_text()
+    return bool(_TASK_PATTERN.search(content))
 
 
 def read_tasks(project_dir: Path) -> str:
-    """Read the current TASKS.md content."""
     path = get_tasks_path(project_dir)
     if not path.exists():
         return ""
@@ -33,24 +42,17 @@ def read_tasks(project_dir: Path) -> str:
 
 
 def write_tasks(project_dir: Path, content: str) -> None:
-    """Write content to TASKS.md."""
     get_tasks_path(project_dir).write_text(content)
 
 
-def count_tasks(project_dir: Path) -> dict:
-    """Count total, completed, and remaining tasks."""
+def count_tasks(project_dir: Path) -> dict[str, int]:
     content = read_tasks(project_dir)
-    total = len(re.findall(r"^- \[[ x]\]", content, re.MULTILINE))
-    done = len(re.findall(r"^- \[x\]", content, re.MULTILINE))
-    return {
-        "total": total,
-        "done": done,
-        "remaining": total - done,
-    }
+    total = len(_TASK_PATTERN.findall(content))
+    done = len(_DONE_PATTERN.findall(content))
+    return {"total": total, "done": done, "remaining": total - done}
 
 
 def print_progress(project_dir: Path) -> None:
-    """Print a summary of task progress."""
     if not is_initialized(project_dir):
         print("  No tasks file found yet.")
         return
@@ -64,9 +66,9 @@ def print_progress(project_dir: Path) -> None:
         print("  No tasks defined yet.")
         return
 
-    pct = int((done / total) * 100) if total > 0 else 0
+    pct = int((done / total) * 100)
     bar_len = 30
-    filled = int(bar_len * done / total) if total > 0 else 0
+    filled = int(bar_len * done / total)
     bar = "█" * filled + "░" * (bar_len - filled)
 
     print(f"\n  Progress: [{bar}] {pct}%")
@@ -75,7 +77,6 @@ def print_progress(project_dir: Path) -> None:
 
 
 def create_initial_tasks(project_dir: Path, spec_content: str) -> None:
-    """Create an initial TASKS.md from a task spec."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     content = f"""# Project Tasks
 

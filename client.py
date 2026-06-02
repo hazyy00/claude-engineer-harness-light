@@ -7,8 +7,9 @@ No Arcade gateway -- uses gh CLI for GitHub, local files for task tracking.
 """
 
 import json
+import os
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import Literal, TypedDict
 
 from dotenv import load_dotenv
 
@@ -63,17 +64,18 @@ def load_orchestrator_prompt() -> str:
 
 
 def use_playwright() -> bool:
-    import os
     return os.environ.get("USE_PLAYWRIGHT", "false").lower() == "true"
 
 
 def create_security_settings(project_dir: Path) -> SecuritySettings:
-    allowed = [
-        f"Read(./**)",
-        f"Write(./**)",
-        f"Edit(./**)",
-        f"Glob(./**)",
-        f"Grep(./**)",
+    project_abs = str(project_dir.resolve())
+    allowed: list[str] = [
+        f"Read({project_abs}/**)",
+        f"Write({project_abs}/**)",
+        f"Edit({project_abs}/**)",
+        f"Glob({project_abs}/**)",
+        f"Grep({project_abs}/**)",
+        # Bash is gated by bash_security_hook -- not a blanket allow
         "Bash(*)",
     ]
     if use_playwright():
@@ -106,8 +108,8 @@ def create_client(
 
     Security layers:
     1. Sandbox -- OS-level bash isolation
-    2. Permissions -- file ops restricted to project_dir
-    3. Security hooks -- bash commands validated against allowlist
+    2. Permissions -- file ops restricted to absolute project_dir path
+    3. Security hooks -- every segment of compound bash commands validated
     """
     security_settings = create_security_settings(project_dir)
     settings_file = write_security_settings(project_dir, security_settings)
@@ -120,30 +122,30 @@ def create_client(
 
     orchestrator_prompt = load_orchestrator_prompt()
 
-    # Build allowed tools list
     allowed_tools = list(BUILTIN_TOOLS)
     if use_playwright():
         allowed_tools.extend(PLAYWRIGHT_TOOLS)
 
-    # Build MCP servers -- only Playwright if enabled (no Arcade)
-    mcp_servers: dict = {}
+    mcp_servers: dict[str, McpServerConfig] = {}
     if use_playwright():
-        mcp_servers["playwright"] = {
-            "command": "npx",
-            "args": ["-y", "@playwright/mcp@latest"],
-        }
+        mcp_servers["playwright"] = McpServerConfig(
+            command="npx",
+            args=["-y", "@playwright/mcp@latest"],
+        )
+
+    hook: HookCallback = bash_security_hook  # type: ignore[assignment]
 
     return ClaudeSDKClient(
         options=ClaudeAgentOptions(
             model=model,
             system_prompt=orchestrator_prompt,
             allowed_tools=allowed_tools,
-            mcp_servers=cast(dict[str, McpServerConfig], mcp_servers),
+            mcp_servers=mcp_servers,
             hooks={
                 "PreToolUse": [
                     HookMatcher(
                         matcher="Bash",
-                        hooks=[cast(HookCallback, bash_security_hook)],
+                        hooks=[hook],
                     ),
                 ],
             },

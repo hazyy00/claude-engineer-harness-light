@@ -9,43 +9,51 @@ GitHub uses the gh CLI via Bash instead of Arcade.
 
 import os
 from pathlib import Path
-from typing import Final, Literal, TypeGuard
+from typing import Final
 
 from claude_agent_sdk.types import AgentDefinition
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
-ModelOption = Literal["haiku", "sonnet", "opus", "inherit"]
-_VALID_MODELS: Final[tuple[str, ...]] = ("haiku", "sonnet", "opus", "inherit")
+# =============================================================================
+# SUB-AGENT MODEL IDs -- UPDATE HERE WHEN ANTHROPIC RELEASES NEW MODELS
+#
+# These models are used by the coding and github sub-agents.
+# The orchestrator model is set in autonomous_agent_pro.py.
+#
+# Override via environment variables:
+#   CODING_AGENT_MODEL=sonnet   (accepts: haiku | sonnet | opus | inherit)
+#   GITHUB_AGENT_MODEL=haiku
+# =============================================================================
+AGENT_MODEL_IDS: Final[dict[str, str]] = {
+    "haiku":   "claude-haiku-4-5-20251001",
+    "sonnet":  "claude-sonnet-4-6",
+    "opus":    "claude-opus-4-7",
+    "inherit": "inherit",
+}
 
-DEFAULT_MODELS: Final[dict[str, ModelOption]] = {
-    "coding": "sonnet",   # Sonnet for best coding quality
-    "github": "haiku",    # Haiku for simple git/gh operations
+DEFAULT_AGENT_MODELS: Final[dict[str, str]] = {
+    "coding": "sonnet",  # Sonnet for best coding quality
+    "github": "haiku",   # Haiku for simple git/gh operations
 }
 
 # Tools available to the coding agent
 CODING_TOOLS: list[str] = [
     "Read", "Write", "Edit", "Glob", "Grep", "Bash",
-    # Playwright tools added dynamically if USE_PLAYWRIGHT=true
 ]
 
-# Tools available to the GitHub agent
-# Uses gh CLI via Bash -- no Arcade required
+# Tools available to the GitHub agent (gh CLI via Bash)
 GITHUB_TOOLS: list[str] = [
-    "Read", "Write", "Edit", "Glob", "Grep", "Bash",
+    "Read", "Glob", "Bash",
 ]
 
 
-def _is_valid_model(value: str) -> TypeGuard[ModelOption]:
-    return value in _VALID_MODELS
-
-
-def _get_model(agent_name: str) -> ModelOption:
+def _get_model_id(agent_name: str) -> str:
     env_var = f"{agent_name.upper()}_AGENT_MODEL"
-    value = os.environ.get(env_var, "").lower().strip()
-    if _is_valid_model(value):
-        return value
-    return DEFAULT_MODELS.get(agent_name, "haiku")
+    alias = os.environ.get(env_var, "").lower().strip()
+    if alias not in AGENT_MODEL_IDS:
+        alias = DEFAULT_AGENT_MODELS.get(agent_name, "haiku")
+    return AGENT_MODEL_IDS[alias]
 
 
 def _load_prompt(name: str) -> str:
@@ -53,7 +61,6 @@ def _load_prompt(name: str) -> str:
 
 
 def _get_coding_tools() -> list[str]:
-    """Get coding tools, adding Playwright if enabled."""
     tools = list(CODING_TOOLS)
     if os.environ.get("USE_PLAYWRIGHT", "false").lower() == "true":
         tools.extend([
@@ -70,12 +77,6 @@ def _get_coding_tools() -> list[str]:
 
 
 def get_agent_definitions(github_enabled: bool = True) -> dict[str, AgentDefinition]:
-    """
-    Build agent definitions based on configuration.
-
-    Args:
-        github_enabled: Whether to include the GitHub agent.
-    """
     agents: dict[str, AgentDefinition] = {
         "coding": AgentDefinition(
             description=(
@@ -85,7 +86,7 @@ def get_agent_definitions(github_enabled: bool = True) -> dict[str, AgentDefinit
             ),
             prompt=_load_prompt("coding_agent_prompt"),
             tools=_get_coding_tools(),
-            model=_get_model("coding"),
+            model=_get_model_id("coding"),
         ),
     }
 
@@ -97,7 +98,7 @@ def get_agent_definitions(github_enabled: bool = True) -> dict[str, AgentDefinit
             ),
             prompt=_load_prompt("github_agent_prompt"),
             tools=GITHUB_TOOLS,
-            model=_get_model("github"),
+            model=_get_model_id("github"),
         )
 
     return agents

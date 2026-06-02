@@ -24,7 +24,18 @@ from tasks import is_initialized, print_progress
 from prompts import get_initializer_task, get_continuation_task, copy_spec_to_project as copy_spec
 
 
-AUTO_CONTINUE_DELAY: int = 3
+# Seconds to wait between normal iterations
+AUTO_CONTINUE_DELAY: int = 5
+
+# Seconds before a single session is considered hung and aborted
+SESSION_TIMEOUT: int = 1800  # 30 minutes
+
+# Maximum consecutive errors before giving up
+MAX_CONSECUTIVE_ERRORS: int = 3
+
+# Base delay for error backoff (doubles each consecutive error)
+ERROR_BASE_DELAY: int = 30
+
 COMPLETION_SIGNAL = "PROJECT_COMPLETE:"
 
 SessionStatus = Literal["continue", "error", "complete"]
@@ -46,7 +57,7 @@ async def run_agent_session(
     """Run a single agent session and return the result."""
     print("Sending prompt to Claude...\n")
 
-    try:
+    async def _run() -> SessionResult:
         await client.query(message)
 
         response_text = ""
@@ -78,15 +89,18 @@ async def run_agent_session(
 
         if COMPLETION_SIGNAL in response_text:
             return SessionResult(status=SESSION_COMPLETE, response=response_text)
-
         return SessionResult(status=SESSION_CONTINUE, response=response_text)
+
+    try:
+        return await asyncio.wait_for(_run(), timeout=SESSION_TIMEOUT)
+
+    except asyncio.TimeoutError:
+        print(f"\nSession timed out after {SESSION_TIMEOUT // 60} minutes.")
+        print("The agent may be stuck. Check the project directory for partial output.")
+        return SessionResult(status=SESSION_ERROR, response="session_timeout")
 
     except ConnectionError as e:
         print(f"\nNetwork error: {e}")
-        return SessionResult(status=SESSION_ERROR, response=str(e))
-
-    except TimeoutError as e:
-        print(f"\nTimeout: {e}. Will retry.")
         return SessionResult(status=SESSION_ERROR, response=str(e))
 
     except Exception as e:
@@ -113,6 +127,8 @@ async def run_autonomous_agent(
     """Run the main autonomous agent loop."""
     project_dir.mkdir(parents=True, exist_ok=True)
 
+    # is_initialized checks that TASKS.md exists AND has actual task entries.
+    # A TASKS.md with no checkboxes (crashed first run) is treated as uninitialized.
     is_first_run = not is_initialized(project_dir)
 
     if is_first_run:
@@ -129,6 +145,7 @@ async def run_autonomous_agent(
         print_progress(project_dir)
 
     iteration = 0
+    consecutive_errors = 0
 
     while True:
         iteration += 1
@@ -168,13 +185,27 @@ async def run_autonomous_agent(
             print("=" * 60)
             print_progress(project_dir)
             break
+
         elif result.status == SESSION_CONTINUE:
+            consecutive_errors = 0
             print(f"\nContinuing in {AUTO_CONTINUE_DELAY}s...")
             print_progress(project_dir)
-        elif result.status == SESSION_ERROR:
-            print("\nSession error -- will retry with a fresh session.")
+            await asyncio.sleep(AUTO_CONTINUE_DELAY)
 
-        await asyncio.sleep(AUTO_CONTINUE_DELAY)
+        elif result.status == SESSION_ERROR:
+            consecutive_errors += 1
+
+            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                print(f"\n{consecutive_errors} consecutive errors -- stopping.")
+                print("Fix the issue above and run the same command to resume.")
+                print_progress(project_dir)
+                break
+
+            # Exponential backoff: 30s, 60s, 120s, ...
+            delay = ERROR_BASE_DELAY * (2 ** (consecutive_errors - 1))
+            print(f"\nError {consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}. "
+                  f"Retrying in {delay}s...")
+            await asyncio.sleep(delay)
 
     print("\n" + "=" * 60)
     print("  SESSION COMPLETE")

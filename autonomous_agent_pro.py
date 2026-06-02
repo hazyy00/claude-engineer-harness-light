@@ -18,6 +18,7 @@ import argparse
 import asyncio
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -27,11 +28,22 @@ from agent import run_autonomous_agent
 
 load_dotenv()
 
-# Available models
+# =============================================================================
+# MODEL IDs -- UPDATE HERE WHEN ANTHROPIC RELEASES NEW MODELS
+#
+# Latest models as of 2025-06:
+#   Haiku  : claude-haiku-4-5-20251001
+#   Sonnet : claude-sonnet-4-6
+#   Opus   : claude-opus-4-7
+#
+# Check https://docs.anthropic.com/en/docs/about-claude/models for the latest.
+# You can also override these with environment variables:
+#   ORCHESTRATOR_MODEL=sonnet  (accepts: haiku | sonnet | opus)
+# =============================================================================
 AVAILABLE_MODELS: dict[str, str] = {
-    "haiku": "claude-haiku-4-5-20251001",
-    "sonnet": "claude-sonnet-4-5-20250929",
-    "opus": "claude-opus-4-5-20251101",
+    "haiku":  "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-4-6",
+    "opus":   "claude-opus-4-7",
 }
 
 # Default orchestrator model -- haiku keeps token usage low on Pro
@@ -48,8 +60,27 @@ DEFAULT_GENERATIONS_BASE: Path = Path(
 DEFAULT_MAX_ITERATIONS: int = int(os.environ.get("MAX_ITERATIONS", "10"))
 
 
-def check_prerequisites() -> bool:
-    """Check that required tools are available."""
+def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def check_prerequisites(github_enabled: bool = True) -> bool:
+    """Check that required tools are installed and authenticated."""
+    ok = True
+
+    # Check claude CLI
+    if not shutil.which("claude"):
+        print("Error: Claude CLI is not installed.")
+        print("Install it with: npm install -g @anthropic-ai/claude-code")
+        ok = False
+    else:
+        result = _run(["claude", "--version"])
+        if result.returncode != 0:
+            print("Warning: Could not determine Claude CLI version.")
+
+    if not github_enabled:
+        return ok
+
     # Check gh CLI
     if not shutil.which("gh"):
         print("Error: GitHub CLI (gh) is not installed.")
@@ -57,14 +88,13 @@ def check_prerequisites() -> bool:
         print("Then authenticate with: gh auth login")
         return False
 
-    # Check gh is authenticated
-    result = os.system("gh auth status > /dev/null 2>&1")
-    if result != 0:
+    result = _run(["gh", "auth", "status"])
+    if result.returncode != 0:
         print("Error: GitHub CLI is not authenticated.")
         print("Run: gh auth login")
         return False
 
-    return True
+    return ok
 
 
 def parse_args() -> argparse.Namespace:
@@ -124,16 +154,36 @@ Examples:
         help="Disable GitHub integration (local git only).",
     )
 
+    parser.add_argument(
+        "--list-models",
+        action="store_true",
+        help="Print current model IDs and exit.",
+    )
+
     return parser.parse_args()
+
+
+def print_model_list() -> None:
+    print("\n" + "=" * 60)
+    print("  CURRENT MODEL IDs")
+    print("=" * 60)
+    for alias, model_id in AVAILABLE_MODELS.items():
+        print(f"  {alias:<8}  {model_id}")
+    print()
+    print("  Update AVAILABLE_MODELS in autonomous_agent_pro.py")
+    print("  or agents/definitions.py to change sub-agent models.")
+    print()
 
 
 def main() -> int:
     args = parse_args()
 
-    # Check prerequisites
-    if not args.no_github:
-        if not check_prerequisites():
-            return 1
+    if args.list_models:
+        print_model_list()
+        return 0
+
+    if not check_prerequisites(github_enabled=not args.no_github):
+        return 1
 
     # Resolve paths
     generations_base: Path = args.generations_base or DEFAULT_GENERATIONS_BASE
@@ -153,7 +203,7 @@ def main() -> int:
     print("  AUTONOMOUS CODING AGENT -- CLAUDE PRO EDITION")
     print("=" * 60)
     print(f"\nProject directory : {project_dir}")
-    print(f"Orchestrator model: {args.model}")
+    print(f"Orchestrator      : {args.model} ({model_id})")
     print(f"Max iterations    : {args.max_iterations}")
     print(f"GitHub integration: {'disabled' if args.no_github else 'enabled (gh CLI)'}")
     print()
@@ -176,7 +226,7 @@ def main() -> int:
         print("\nCommon causes:")
         print("  1. Not logged in to Claude -- run: claude login")
         print("  2. gh CLI not authenticated -- run: gh auth login")
-        print("  3. Hit Pro plan token limit -- wait and try again, or use --max-iterations to reduce usage")
+        print("  3. Hit Pro plan token limit -- wait and try again, or use --max-iterations")
         raise
 
 
